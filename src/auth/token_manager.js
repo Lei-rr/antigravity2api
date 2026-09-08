@@ -54,7 +54,7 @@ class TokenManager {
       sessionId: generateSessionId(),
       instanceId: token.instanceId || generateInstanceId(),
       deviceId: token.deviceId || randomUUID(),
-      sub: token.sub || 'free-tier',
+      sub: token.sub || 'g1-pro-tier',
       hasQuota: token.hasQuota ?? true,
       enable: token.enable ?? true,
     };
@@ -149,14 +149,8 @@ class TokenManager {
       return;
     }
 
-    // 启动时最多预热刷新前 10 个，避免海量账号瞬间并发打满 Google 导致 429 频控
-    const batchToRefresh = expiredTokens.length > 20 ? expiredTokens.slice(0, 10) : expiredTokens;
-    if (expiredTokens.length > 20) {
-      log.info(`共有 ${expiredTokens.length} 个过期Token，启动时先预热刷新前 ${batchToRefresh.length} 个，其余账号将在请求轮询时自动按需刷新`);
-    }
-
     // 并发刷新
-    const { tokensToDisable } = await this.lifecycle.refreshTokensConcurrently(batchToRefresh);
+    const { tokensToDisable } = await this.lifecycle.refreshTokensConcurrently(expiredTokens);
 
     // 禁用失效的 tokens
     for (const { token, tokenId } of tokensToDisable) {
