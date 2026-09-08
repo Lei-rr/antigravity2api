@@ -298,6 +298,16 @@
                                 style="background: var(--primary);" title="导出Token">📤 导出</button>
                             <button type="button" onclick="importTokens()" class="btn btn-sm"
                                 style="background: var(--primary);" title="添加/导入Token">📥 导入</button>
+                            <button type="button" id="prevPageBtn" onclick="changePage(-1)" class="btn btn-secondary btn-sm" title="上一页">◀ 上页</button>
+                            <span id="pageInfo" style="font-size: 0.8rem; font-weight: 600; color: var(--text); display: inline-flex; align-items: center; padding: 0 4px; white-space: nowrap;">1 / 1</span>
+                            <button type="button" id="nextPageBtn" onclick="changePage(1)" class="btn btn-secondary btn-sm" title="下一页">下页 ▶</button>
+                            <select id="pageSizeSelect" onchange="setPageSize(this.value)" class="btn btn-secondary btn-sm" style="cursor: pointer; padding: 0 4px; min-width: auto; height: 32px;">
+                                <option value="50" selected>50/页</option>
+                                <option value="100">100/页</option>
+                                <option value="200">200/页</option>
+                                <option value="500">500/页</option>
+                                <option value="1000">1000/页</option>
+                            </select>
                         </div>
                     </div>
 

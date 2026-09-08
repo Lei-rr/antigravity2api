@@ -141,8 +141,31 @@ function verifyPassword(password) {
 // Token管理API - 需要JWT认证（使用 Cookie 优先）
 router.get('/tokens', cookieAuthMiddleware, async (req, res) => {
   try {
-    const tokens = await tokenManager.getTokenList();
-    res.json({ success: true, data: tokens });
+    const allTokens = await tokenManager.getTokenList();
+    const counts = {
+      total: allTokens.length,
+      enabled: allTokens.filter(t => t.enable !== false).length,
+      disabled: allTokens.filter(t => t.enable === false).length
+    };
+
+    const page = parseInt(req.query.page, 10);
+    const limit = parseInt(req.query.limit, 10);
+    const filter = req.query.filter;
+
+    if (!page && !limit) {
+      return res.json({ success: true, data: allTokens, counts, total: allTokens.length });
+    }
+
+    let filtered = allTokens;
+    if (filter === 'enabled') filtered = filtered.filter(t => t.enable !== false);
+    else if (filter === 'disabled') filtered = filtered.filter(t => t.enable === false);
+
+    const safeLimit = [50, 100, 200, 500, 1000].includes(limit) ? limit : 50;
+    const total = filtered.length;
+    const start = Math.max(0, (page - 1) * safeLimit);
+    const data = filtered.slice(start, start + safeLimit);
+
+    res.json({ success: true, data, total, counts, page: page || 1, limit: safeLimit });
   } catch (error) {
     logger.error('获取Token列表失败:', error.message);
     res.status(500).json({ success: false, message: error.message });

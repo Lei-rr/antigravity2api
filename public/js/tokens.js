@@ -3,6 +3,12 @@
 let cachedTokens = [];
 let currentFilter = localStorage.getItem('tokenFilter') || 'all'; // 'all', 'enabled', 'disabled'
 let skipAnimation = false; // 是否跳过动画
+let currentPage = 1;
+let pageSize = (() => {
+    const s = parseInt(localStorage.getItem('tokenPageSize'), 10);
+    return [50, 100, 200, 500, 1000].includes(s) ? s : 50;
+})();
+let totalTokenCount = 0;
 
 // 移动端操作区手动收起/展开
 let actionBarCollapsed = localStorage.getItem('actionBarCollapsed') === 'true';
@@ -863,6 +869,8 @@ function initFilterState() {
     const savedFilter = localStorage.getItem('tokenFilter') || 'all';
     currentFilter = savedFilter;
     updateFilterButtonState(savedFilter);
+    const sizeSelect = document.getElementById('pageSizeSelect');
+    if (sizeSelect) sizeSelect.value = pageSize;
 }
 
 // 更新筛选按钮状态
@@ -884,16 +892,27 @@ function filterTokens(filter) {
 
     updateFilterButtonState(filter);
 
-    // 重新渲染
-    renderTokens(cachedTokens);
+    currentPage = 1;
+    loadTokens();
 }
 
-async function loadTokens() {
+async function loadTokens(targetPage) {
+    if (typeof targetPage === 'number') currentPage = targetPage;
     try {
-        const response = await authFetch('/admin/tokens');
+        const response = await authFetch(`/admin/tokens?page=${currentPage}&limit=${pageSize}&filter=${currentFilter}`);
 
         const data = await response.json();
         if (data.success) {
+            if (data.counts) {
+                const totalEl = document.getElementById('totalTokens');
+                const enabledEl = document.getElementById('enabledTokens');
+                const disabledEl = document.getElementById('disabledTokens');
+                if (totalEl) totalEl.textContent = data.counts.total ?? 0;
+                if (enabledEl) enabledEl.textContent = data.counts.enabled ?? 0;
+                if (disabledEl) disabledEl.textContent = data.counts.disabled ?? 0;
+            }
+            totalTokenCount = data.total || 0;
+            updatePaginationUI();
             renderTokens(data.data);
         } else {
             showToast('加载失败: ' + (data.message || '未知错误'), 'error');
@@ -902,6 +921,44 @@ async function loadTokens() {
         showToast('加载Token失败: ' + error.message, 'error');
     }
 }
+
+function updatePaginationUI() {
+    const totalPages = Math.max(1, Math.ceil(totalTokenCount / pageSize));
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const pageInfo = document.getElementById('pageInfo');
+    if (pageInfo) pageInfo.textContent = `${currentPage} / ${totalPages}`;
+
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    if (prevBtn) prevBtn.disabled = currentPage <= 1;
+    if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+
+    const sizeSelect = document.getElementById('pageSizeSelect');
+    if (sizeSelect) sizeSelect.value = pageSize;
+}
+
+function changePage(delta) {
+    const totalPages = Math.max(1, Math.ceil(totalTokenCount / pageSize));
+    const next = currentPage + delta;
+    if (next >= 1 && next <= totalPages) {
+        currentPage = next;
+        loadTokens();
+    }
+}
+
+function setPageSize(val) {
+    const size = parseInt(val, 10);
+    if ([50, 100, 200, 500, 1000].includes(size)) {
+        pageSize = size;
+        localStorage.setItem('tokenPageSize', size);
+        currentPage = 1;
+        loadTokens();
+    }
+}
+
+window.changePage = changePage;
+window.setPageSize = setPageSize;
 
 // 正在刷新的 Token 集合（使用 tokenId）
 const refreshingTokens = new Set();
@@ -915,22 +972,10 @@ function cleanupRefreshingTokens() {
 }
 
 function renderTokens(tokens) {
-    // 只在首次加载时更新缓存
-    if (tokens !== cachedTokens) {
-        cachedTokens = tokens;
-    }
+    cachedTokens = tokens;
 
-    document.getElementById('totalTokens').textContent = tokens.length;
-    document.getElementById('enabledTokens').textContent = tokens.filter(t => t.enable).length;
-    document.getElementById('disabledTokens').textContent = tokens.filter(t => !t.enable).length;
-
-    // 根据筛选条件过滤
-    let filteredTokens = tokens;
-    if (currentFilter === 'enabled') {
-        filteredTokens = tokens.filter(t => t.enable);
-    } else if (currentFilter === 'disabled') {
-        filteredTokens = tokens.filter(t => !t.enable);
-    }
+    // 数据已由服务端完成筛选和分页
+    let filteredTokens = tokens || [];
 
     const tokenList = document.getElementById('tokenList');
     if (filteredTokens.length === 0) {
@@ -953,9 +998,8 @@ function renderTokens(tokens) {
         const isRefreshing = refreshingTokens.has(tokenId);
         const cardId = tokenId.substring(0, 8);
 
-        // 计算在原始列表中的序号（基于添加顺序）
-        const originalIndex = cachedTokens.findIndex(t => t.id === token.id);
-        const tokenNumber = originalIndex + 1;
+        // 计算全局序号
+        const tokenNumber = (currentPage - 1) * pageSize + index + 1;
 
         // 转义所有用户数据防止 XSS
         const safeTokenId = escapeJs(tokenId);
