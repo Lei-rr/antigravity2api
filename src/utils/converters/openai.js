@@ -44,9 +44,28 @@ function extractImagesFromContent(content) {
   return result;
 }
 
+function extractTextContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(item => item && (item.type === 'text' || typeof item.text === 'string'))
+      .map(item => item.text || '')
+      .join('');
+  }
+  if (content && typeof content === 'object') {
+    try {
+      return JSON.stringify(content);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
 function handleAssistantMessage(message, antigravityMessages, enableThinking, actualModelName, sessionId, hasTools) {
   const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
-  const hasContent = message.content && message.content.trim() !== '';
+  const textContent = extractTextContent(message.content);
+  const hasContent = textContent.trim() !== '';
   const { reasoningSignature, reasoningContent, toolSignature, toolContent } = getSignatureContext(sessionId, actualModelName, hasTools);
   
   const toolCalls = hasToolCalls
@@ -85,7 +104,7 @@ function handleAssistantMessage(message, antigravityMessages, enableThinking, ac
     }
   }
   if (hasContent) {
-    const part = { text: message.content.trimEnd() };
+    const part = { text: textContent.trimEnd() };
     parts.push(part);
   }
   if (!enableThinking && parts[0]) delete parts[0].thoughtSignature;
@@ -95,7 +114,10 @@ function handleAssistantMessage(message, antigravityMessages, enableThinking, ac
 
 function handleToolCall(message, antigravityMessages) {
   const functionName = findFunctionNameById(message.tool_call_id, antigravityMessages);
-  pushFunctionResponse(message.tool_call_id, functionName, message.content, antigravityMessages);
+  const toolContent = typeof message.content === 'string'
+    ? message.content
+    : (message.content ? JSON.stringify(message.content) : '');
+  pushFunctionResponse(message.tool_call_id, functionName, toolContent, antigravityMessages);
 }
 
 function openaiMessageToAntigravity(openaiMessages, enableThinking, actualModelName, sessionId, hasTools) {
