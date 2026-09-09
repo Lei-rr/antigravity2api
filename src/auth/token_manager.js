@@ -85,7 +85,8 @@ class TokenManager {
 
       // 6. 创建轮询策略实例
       this.strategy = StrategyFactory.create(this.rotationStrategyName, {
-        requestCountPerToken: this.requestCountPerToken
+        requestCountPerToken: this.requestCountPerToken,
+        currentIndex: this.savedCurrentIndex || 0
       });
 
       // 7. 日志输出
@@ -125,6 +126,9 @@ class TokenManager {
       if (jsonConfig.rotation) {
         this.rotationStrategyName = jsonConfig.rotation.strategy || RotationStrategy.ROUND_ROBIN;
         this.requestCountPerToken = jsonConfig.rotation.requestCount || DEFAULT_REQUEST_COUNT_PER_TOKEN;
+        if (Number.isInteger(jsonConfig.rotation.currentIndex)) {
+          this.savedCurrentIndex = jsonConfig.rotation.currentIndex;
+        }
       }
     } catch (error) {
       log.warn('加载轮询配置失败，使用默认值:', error.message);
@@ -560,6 +564,20 @@ class TokenManager {
     try {
       const tokenId = await this.pool.generateTokenId(token);
       quotaManager.recordRequest(tokenId, modelId);
+
+      // 定期防抖持久化 currentIndex 到 config.json（每3秒最多写一次，不损耗高并发性能）
+      if (this.strategy && Number.isInteger(this.strategy.currentIndex)) {
+        const now = Date.now();
+        if (!this._lastIndexSaveTime || now - this._lastIndexSaveTime > 3000) {
+          this._lastIndexSaveTime = now;
+          const currentConfig = getConfigJson();
+          if (!currentConfig.rotation) currentConfig.rotation = {};
+          if (currentConfig.rotation.currentIndex !== this.strategy.currentIndex) {
+            currentConfig.rotation.currentIndex = this.strategy.currentIndex;
+            saveConfigJson(currentConfig);
+          }
+        }
+      }
     } catch (error) {
       // 记录失败不影响请求
       log.warn('记录请求次数失败:', error.message);

@@ -43,9 +43,9 @@ class TokenRotationStrategy {
  * 每次请求切换到下一个 token
  */
 class RoundRobinStrategy extends TokenRotationStrategy {
-  constructor() {
+  constructor(initialIndex = 0) {
     super();
-    this.currentIndex = 0;
+    this.currentIndex = Number.isInteger(initialIndex) ? initialIndex : 0;
   }
 
   selectToken(tokens, context) {
@@ -71,9 +71,9 @@ class RoundRobinStrategy extends TokenRotationStrategy {
  * 使用一个 token 直到其额度耗尽，再切换到下一个
  */
 class QuotaExhaustedStrategy extends TokenRotationStrategy {
-  constructor() {
+  constructor(initialIndex = 0) {
     super();
-    this.currentIndex = 0;
+    this.currentIndex = Number.isInteger(initialIndex) ? initialIndex : 0;
   }
 
   selectToken(tokens, context) {
@@ -109,10 +109,10 @@ class QuotaExhaustedStrategy extends TokenRotationStrategy {
  * 每个 token 处理固定次数的请求后切换
  */
 class RequestCountStrategy extends TokenRotationStrategy {
-  constructor(requestCountPerToken = 10) {
+  constructor(requestCountPerToken = 10, initialIndex = 0) {
     super();
     this.requestCountPerToken = requestCountPerToken;
-    this.currentIndex = 0;
+    this.currentIndex = Number.isInteger(initialIndex) ? initialIndex : 0;
     /** @type {Map<string, number>} */
     this.tokenRequestCounts = new Map();
   }
@@ -199,19 +199,20 @@ class StrategyFactory {
    * @returns {TokenRotationStrategy} 策略实例
    */
   static create(strategyName, options = {}) {
+    const initialIndex = Number.isInteger(options.currentIndex) ? options.currentIndex : 0;
     switch (strategyName) {
       case 'round_robin':
-        return new RoundRobinStrategy();
+        return new RoundRobinStrategy(initialIndex);
       
       case 'quota_exhausted':
-        return new QuotaExhaustedStrategy();
+        return new QuotaExhaustedStrategy(initialIndex);
       
       case 'request_count':
-        return new RequestCountStrategy(options.requestCountPerToken || 10);
+        return new RequestCountStrategy(options.requestCountPerToken || 10, initialIndex);
       
       default:
         log.warn(`未知的轮询策略: ${strategyName}，使用默认策略 round_robin`);
-        return new RoundRobinStrategy();
+        return new RoundRobinStrategy(initialIndex);
     }
   }
 
