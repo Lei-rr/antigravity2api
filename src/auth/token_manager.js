@@ -1,6 +1,6 @@
 import { log } from '../utils/logger.js';
 import { generateSessionId, generateInstanceId } from '../utils/idGenerator.js';
-import config, { getConfigJson } from '../config/config.js';
+import config, { getConfigJson, saveConfigJson } from '../config/config.js';
 import { DEFAULT_REQUEST_COUNT_PER_TOKEN } from '../constants/index.js';
 import TokenStore from './token_store.js';
 import TokenPool from './token_pool.js';
