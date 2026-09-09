@@ -288,17 +288,23 @@ export async function with429Retry(fn, maxRetries, options = {}, legacyOnAttempt
       return await fn(attempt, shouldUseCredits);
     } catch (error) {
       const status = getStatus(error);
-      if (status !== 429 && status !== 503) {
+      const isTokenDisabled = status === 403 && !String(error?.message || '').includes('超出模型最大上下文');
+      if (status !== 429 && status !== 503 && !isTokenDisabled) {
         throw error;
       }
 
       const hint = getRetryHint(error);
-      const errorType = status === 503 ? '503' : '429';
+      const errorType = isTokenDisabled ? '403(封号禁用)' : (status === 503 ? '503' : '429');
       const modelId = retryOptions.modelId || null;
       const previousTokenId = getCurrentTokenId(retryOptions);
 
       if (status === 429 && !hint.hasRetryHint) {
         logger.warn(`${loggerPrefix}收到 429，但错误响应体未提供等待间隔/恢复时间，按不可重试处理`);
+        throw error;
+      }
+
+      if (isTokenDisabled && !canPollTokenForRetry) {
+        logger.warn(`${loggerPrefix}收到 403，但未开启重试轮询 Token，按不可重试处理`);
         throw error;
       }
 
@@ -321,16 +327,20 @@ export async function with429Retry(fn, maxRetries, options = {}, legacyOnAttempt
 
       const hintText = hint.hasRetryHint
         ? `（上游提示≈${hint.explicitDelayMs}ms）`
-        : '（上游未提示等待时间）';
+        : '';
+
+      const waitIntervalMs = isTokenDisabled ? 0 : retryIntervalMs;
 
       logger.warn(
-        `${loggerPrefix}收到 ${errorType}，等待固定间隔 ${retryIntervalMs}ms 后进行第 ${nextAttempt} 次重试（共 ${retries} 次）` +
+        `${loggerPrefix}收到 ${errorType}，${waitIntervalMs > 0 ? `等待固定间隔 ${waitIntervalMs}ms 后` : '立即'}进行第 ${nextAttempt} 次重试（共 ${retries} 次）` +
         hintText +
         (shouldUseCredits ? '（使用积分）' : '') +
         (canPollTokenForRetry ? '（重试前重新轮询可用Token）' : '')
       );
 
-      await sleep(retryIntervalMs);
+      if (waitIntervalMs > 0) {
+        await sleep(waitIntervalMs);
+      }
 
       const prepared = await prepareNextAttempt(retryOptions, {
         attempt,

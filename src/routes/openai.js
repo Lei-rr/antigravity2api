@@ -29,5 +29,6 @@ router.get('/models', async (req, res) => {
  * 处理聊天补全请求
  */
 router.post('/chat/completions', handleOpenAIRequest);
+router.post('/responses', handleOpenAIRequest);
 
 export default router;
