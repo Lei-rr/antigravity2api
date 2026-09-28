@@ -29,8 +29,26 @@ const publicDir = getPublicDir();
 
 const app = express();
 
-// 信任反向代理，以便正确获取 HTTPS 协议状态 (req.secure) 和客户端 IP
-app.set('trust proxy', true);
+// 信任反向代理配置（通过环境变量 TRUST_PROXY 控制）：
+// - 默认 false：直连部署（前面没有 HTTP 反向代理）时绝不信任 X-Forwarded-For，
+//   否则客户端可伪造 req.ip，绕过甚至嫁祸 IP 封禁（历史漏洞）
+// - 部署在反向代理后时按实际拓扑配置：TRUST_PROXY=1（信任 1 层代理，且代理必须重写 XFF）
+//   或 TRUST_PROXY='10.0.0.0/8,172.16.0.0/12'（信任指定网段）
+const trustProxyEnv = (process.env.TRUST_PROXY || '').trim();
+let trustProxySetting = false;
+if (/^\d+$/.test(trustProxyEnv)) {
+  trustProxySetting = parseInt(trustProxyEnv, 10);
+} else if (trustProxyEnv === 'true') {
+  // 信任全部代理（仅在完全可控的内网链路使用，不推荐）
+  trustProxySetting = true;
+} else if (trustProxyEnv) {
+  trustProxySetting = trustProxyEnv;
+}
+app.set('trust proxy', trustProxySetting);
+
+// 路由大小写敏感：与 API Key 中间件的路径归一化形成双重保险，
+// 防止 /V1、/V1beta 等大小写变体绕过鉴权（历史漏洞）
+app.set('case sensitive routing', true);
 
 // 初始化 IP 封禁管理器
 ipBlockManager.init();
@@ -89,37 +107,52 @@ app.use((req, res, next) => {
   next();
 });
 
-// SD API 路由
-app.use('/sdapi/v1', sdRouter);
-
 // ==================== API Key 验证中间件 ====================
+// 需要校验的路径前缀（统一小写后判断，必须覆盖所有对外路由挂载点）：
+// - /v1/*         OpenAI / Claude 兼容
+// - /cli/v1/*     Gemini CLI（OpenAI/Claude 格式）
+// - /cli/v1beta/* Gemini CLI（Gemini 格式）
+// - /sdapi/v1/*   SD WebUI 兼容（如无需鉴权可从此数组移除）
+const API_KEY_HEADER_PREFIXES = ['/v1/', '/cli/v1/', '/cli/v1beta/', '/sdapi/v1/'];
+// 使用 query/key 传递 API Key 的前缀（Gemini 原生格式）
+const API_KEY_QUERY_PREFIXES = ['/v1beta/'];
+
 app.use((req, res, next) => {
-  if (req.path.startsWith('/v1/') || req.path.startsWith('/cli/v1/')) {
-    const apiKey = config.security?.apiKey;
-    if (apiKey) {
-      const authHeader = req.headers.authorization || req.headers['x-api-key'];
-      const providedKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-      if (providedKey !== apiKey) {
-        ipBlockManager.recordViolation(req.ip, 'auth_fail');
-        logger.warn(`API Key 验证失败: ${req.method} ${req.path} (提供的Key: ${providedKey ? providedKey.substring(0, 10) + '...' : '无'})`);
-        return res.status(401).json({ error: 'Invalid API Key' });
-      }
+  const apiKey = config.security?.apiKey;
+  if (!apiKey) {
+    return next();
+  }
+
+  // 路径统一转小写：Express 路由匹配默认大小写不敏感，
+  // 若此处区分大小写，/V1、/cli/V1beta 等变体可绕过鉴权（历史漏洞）
+  const normalizedPath = req.path.toLowerCase();
+
+  const rejectInvalidKey = (providedKey) => {
+    ipBlockManager.recordViolation(req.ip, 'auth_fail');
+    logger.warn(`API Key 验证失败: ${req.method} ${req.path} (提供的Key: ${providedKey ? providedKey.substring(0, 10) + '...' : '无'})`);
+    return res.status(401).json({ error: 'Invalid API Key' });
+  };
+
+  if (API_KEY_HEADER_PREFIXES.some(prefix => normalizedPath.startsWith(prefix))) {
+    const authHeader = req.headers.authorization || req.headers['x-api-key'];
+    const providedKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    if (providedKey !== apiKey) {
+      return rejectInvalidKey(providedKey);
     }
-  } else if (req.path.startsWith('/v1beta/')) {
-    const apiKey = config.security?.apiKey;
-    if (apiKey) {
-      const providedKey = req.query.key || req.headers['x-goog-api-key'];
-      if (providedKey !== apiKey) {
-        ipBlockManager.recordViolation(req.ip, 'auth_fail');
-        logger.warn(`API Key 验证失败: ${req.method} ${req.path} (提供的Key: ${providedKey ? providedKey.substring(0, 10) + '...' : '无'})`);
-        return res.status(401).json({ error: 'Invalid API Key' });
-      }
+  } else if (API_KEY_QUERY_PREFIXES.some(prefix => normalizedPath.startsWith(prefix))) {
+    const providedKey = req.query.key || req.headers['x-goog-api-key'];
+    if (providedKey !== apiKey) {
+      return rejectInvalidKey(providedKey);
     }
   }
+
   next();
 });
 
 // ==================== API 路由 ====================
+
+// SD WebUI 兼容 API（必须放在 API Key 中间件之后，否则会绕过鉴权）
+app.use('/sdapi/v1', sdRouter);
 
 // OpenAI 兼容 API
 app.use('/v1', openaiRouter);

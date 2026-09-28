@@ -79,7 +79,15 @@ class LogWebSocketServer {
     initialize(server) {
         this.wss = new WebSocketServer({ server, path: '/ws/logs' });
 
-        this.wss.on('connection', (ws, req) => {
+        this.wss.on('connection', async (ws, req) => {
+            // 鉴权：仅允许携带有效管理员 JWT 的连接（Cookie: authToken 或 ?token=）
+            // 修复：此前 /ws/logs 无任何鉴权，任何人都能匿名读取实时日志
+            if (!(await this._isAuthorized(req))) {
+                ws.on('error', () => {});
+                ws.close(4001, 'Unauthorized');
+                return;
+            }
+
             this.clients.add(ws);
 
             // 发送最近的日志历史
@@ -99,6 +107,45 @@ class LogWebSocketServer {
                 this.clients.delete(ws);
             });
         });
+    }
+
+    /**
+     * 校验 WebSocket 连接携带的管理员凭证
+     * - 优先读取 Cookie.authToken（后台页面同源连接时浏览器会自动携带）
+     * - 兼容 ?token= 查询参数（脚本/调试用）
+     * @param {http.IncomingMessage} req
+     * @returns {Promise<boolean>}
+     */
+    async _isAuthorized(req) {
+        try {
+            // 动态导入，避免 logger -> logWsServer -> jwt -> config -> logger 的循环依赖
+            const { verifyToken } = await import('../auth/jwt.js');
+
+            let token = null;
+
+            // 1) Cookie.authToken
+            const cookieHeader = req.headers?.cookie || '';
+            const cookieMatch = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
+            if (cookieMatch) {
+                token = decodeURIComponent(cookieMatch[1]);
+            }
+
+            // 2) 查询参数 token（兼容脚本调用）
+            if (!token) {
+                try {
+                    token = new URL(req.url, 'http://localhost').searchParams.get('token');
+                } catch (e) {
+                    // req.url 异常时忽略
+                }
+            }
+
+            if (!token) return false;
+
+            verifyToken(token);
+            return true;
+        } catch (e) {
+            return false;
+        }
     }
 
     /**
