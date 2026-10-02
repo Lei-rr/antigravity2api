@@ -19,6 +19,10 @@ const envPath = getEnvPath();
 
 const router = express.Router();
 
+// 敏感环境变量：接口层脱敏，避免任何登录会话读取明文密钥
+const MASKED_ENV_KEYS = ['JWT_SECRET', 'ADMIN_PASSWORD', 'API_KEY'];
+const ENV_MASK = '__MASKED__';
+
 // 禁用缓存中间件，确保管理后台数据实时性
 router.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -672,6 +676,11 @@ router.get('/config', cookieAuthMiddleware, (req, res) => {
     const envData = parseEnvFile(envPath);
     const jsonData = getConfigJson();
 
+    // 脱敏：敏感字段不回传明文（需要修改时直接提交新值即可）
+    for (const key of MASKED_ENV_KEYS) {
+      if (envData[key] !== undefined && envData[key] !== '') envData[key] = ENV_MASK;
+    }
+
     res.json({ success: true, data: { env: envData, json: jsonData } });
   } catch (error) {
     logger.error('读取配置失败:', error.message);
@@ -704,7 +713,13 @@ router.put('/config', cookieAuthMiddleware, (req, res) => {
       }
     }
 
-    if (envUpdates) updateEnvFile(envPath, envUpdates);
+    if (envUpdates) {
+      // 忽略脱敏占位符与空值，避免将占位符写回配置文件
+      for (const key of MASKED_ENV_KEYS) {
+        if (envUpdates[key] === ENV_MASK || envUpdates[key] === '') delete envUpdates[key];
+      }
+      updateEnvFile(envPath, envUpdates);
+    }
     if (jsonUpdates) saveConfigJson(deepMerge(getConfigJson(), jsonUpdates));
 
     dotenv.config({ override: true });
